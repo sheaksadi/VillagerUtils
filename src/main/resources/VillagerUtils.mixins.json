@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "me.sheaksadi.villagerutils.mixin",
+  "compatibilityLevel": "JAVA_16",
+  "mixins": [
+
+  ],
+  "client": [
+    "OpenScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
