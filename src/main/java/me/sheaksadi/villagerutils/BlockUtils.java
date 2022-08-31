@@ -1,25 +1,19 @@
 package me.sheaksadi.villagerutils;
 
 
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.block.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.gui.screen.ingame.MerchantScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.entity.EntityType;
+import net.minecraft.enchantment.Enchantment;
 import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
-import net.minecraft.network.listener.ClientPlayPacketListener;
-import net.minecraft.network.packet.s2c.play.OpenScreenS2CPacket;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.LiteralText;
@@ -38,7 +32,7 @@ import net.minecraft.village.VillagerProfession;
 
 public class BlockUtils {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
-    private boolean breaking;
+
 
 
     public static boolean breakBlock(BlockPos blockPos){
@@ -50,10 +44,17 @@ public class BlockUtils {
 
         boolean value = MinecraftClient.getInstance().interactionManager.updateBlockBreakingProgress(blockPos, Direction.DOWN);
         player.swingHand(Hand.MAIN_HAND);
+        if (!value) {
+            VillagerUtils.stage=3;
+        }
+        if (player.isCreative()&&mc.world.getBlockState(blockPos).isAir()) VillagerUtils.stage=3;
         return value;
     }
 
     public static boolean placeBlock (BlockPos blockPos){
+        if (!mc.world.getBlockState(blockPos).isAir()){
+            VillagerUtils.stage=1;
+        }
         switchToWorkStation();
         Vec3d hitpos = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
         BlockPos neighbor;
@@ -67,8 +68,11 @@ public class BlockUtils {
             hitpos.add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
         }
         Direction s = side;
-
-        return place(blockPos, new BlockHitResult(hitpos, s, neighbor, false));
+        boolean placed =  place(blockPos, new BlockHitResult(hitpos, s, neighbor, false));
+        if (placed){
+            VillagerUtils.stage=1;
+        }
+        return placed;
     }
 
     public static void interactWithVillager(VillagerEntity entity){
@@ -85,16 +89,13 @@ public class BlockUtils {
 
 
     public static boolean getVillagerTrades() {
-        if (lookingAtValidVillager()) {
+        if (lookingAtValidVillager()!= null&& lookingAtValidVillager()==VillagerProfession.LIBRARIAN) {
             interactWithVillager((VillagerEntity) mc.targetedEntity);
 
             Screen s = mc.currentScreen;
 
-
-
-
             if(s instanceof MerchantScreen screen){
-
+                //VillagerUtils.LOGGER.info("screen is on");
                 StringBuilder sb = new StringBuilder();
                 for(TradeOffer offer : screen.getScreenHandler().getRecipes()){
                     //player.sendMessage(new LiteralText(offer.getSellItem().getItem().getName().getString() + ""), false);
@@ -106,24 +107,44 @@ public class BlockUtils {
                         int lvl = Integer.parseInt(enchantNBT.get("lvl").asString().replace("s", ""));
                         sb.append(Registry.ENCHANTMENT.get(new Identifier(id)).getName(lvl).getString());
                         //player.sendMessage(new LiteralText(Registry.ENCHANTMENT.get(new Identifier(id)).getName(lvl).getString() + ""), false);
+                        Enchantment enchantment = Registry.ENCHANTMENT.get(new Identifier(id));
+                        if (VillagerUtils.enchantments.contains(enchantment)){
+                            if (VillagerUtils.rollForMax){
+                                assert enchantment != null;
+                                if (lvl==enchantment.getMaxLevel()){
+                                    VillagerUtils.enchantments.remove(enchantment);
+                                    VillagerUtils.toggle();
+                                }else {
+                                    assert mc.player != null;
+                                    mc.player.sendMessage(new LiteralText("not right level"),true);
+                                }
+                            }else {
+                                VillagerUtils.enchantments.remove(enchantment);
+                                VillagerUtils.toggle();
+                            }
+                        }
+                        else VillagerUtils.stage=2;
+
                     }
-                    else sb.append(offer.getSellItem().getItem().getName().getString());
+                    else{
+                        VillagerUtils.stage=2;
+                        sb.append(offer.getSellItem().getItem().getName().getString());
+                    }
                     sb.append(" (").append(offer.getOriginalFirstBuyItem().getCount()).append(")");
                 }
-                mc.player.sendMessage(new LiteralText(sb.toString()),false);
+                assert mc.player != null;
+                mc.player.sendMessage(new LiteralText(sb.toString()),true);
 //                mc.player.closeHandledScreen();
             }
-
-
-
-
 
             return true;
         }
         return false;
     }
-    public static boolean lookingAtValidVillager() {
-        return mc.targetedEntity != null && mc.targetedEntity.getType() == EntityType.VILLAGER && ((VillagerEntity) mc.targetedEntity).getVillagerData().getProfession() == VillagerProfession.LIBRARIAN;
+    public static VillagerProfession lookingAtValidVillager() {
+        VillagerEntity entity = (VillagerEntity) mc.targetedEntity;
+        if (entity==null) return null;
+        return  entity.getVillagerData().getProfession();
     }
     private static boolean place(BlockPos blockPos, BlockHitResult blockHitResult){
         ClientPlayerEntity player = MinecraftClient.getInstance().player;
@@ -169,13 +190,12 @@ public class BlockUtils {
     }
 
     public static boolean canBreak(BlockPos blockPos, BlockState state) {
+        assert mc.player != null;
         if (!mc.player.isCreative() && state.getHardness(mc.world, blockPos) < 0) return false;
         return state.getOutlineShape(mc.world, blockPos) != VoxelShapes.empty();
     }
 
-    private boolean isBreaking (){
-        return this.breaking;
-    }
+
 
     public static int getBestTool(BlockPos blockPos){
         MinecraftClient minecraftClient = MinecraftClient.getInstance();
@@ -215,9 +235,15 @@ public class BlockUtils {
                     player.getInventory().selectedSlot = bestTool - 36;
 
             }else {
-                mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, bestTool, 0, SlotActionType.PICKUP, player);
-                mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, selectedSlot, 0, SlotActionType.PICKUP, player);
-                mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, bestTool, 0, SlotActionType.PICKUP, player);
+                try{
+                    mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, bestTool, 0, SlotActionType.PICKUP, player);
+                    mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, selectedSlot, 0, SlotActionType.PICKUP, player);
+                    mc.interactionManager.clickSlot(inv.getScreenHandler().syncId, bestTool, 0, SlotActionType.PICKUP, player);
+                }
+                catch (Exception ignored){
+
+                }
+
             }
 
         }
@@ -287,7 +313,7 @@ public class BlockUtils {
         return null;
     }
 
-    private static boolean isClickable(Block block) {
+    public static boolean isClickable(Block block) {
         return block instanceof CraftingTableBlock
                 || block instanceof AnvilBlock
                 || block instanceof AbstractButtonBlock
